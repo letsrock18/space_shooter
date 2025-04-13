@@ -38,8 +38,8 @@ const MUSIC_BACKGROUND = 'musicBgm';
 
 function preload() {
     console.log("Preloading assets...");
-    // Load sounds from 'media/' folder
-    // this.load.audio(SOUND_LASER, 'assets/sounds/laser.wav'); // Keep or replace if you have it
+    // Load sounds - paths now relative to the public folder
+    // this.load.audio(SOUND_LASER, 'sounds/laser.wav'); // Example if moved to public/sounds
     // this.load.audio(SOUND_EXPLODE_S, 'assets/sounds/explode_small.wav'); // Keep or replace if you have it
     // this.load.audio(SOUND_EXPLODE_L, 'assets/sounds/explode_large.wav'); // Keep or replace if you have it
     
@@ -54,7 +54,7 @@ function preload() {
     }
 
     // Load heart image if you have one
-    // this.load.image('heart', 'media/heart.png');
+    // this.load.image('heart', 'media/heart.png'); // Path relative to public
 }
 
 // Use a variable to hold the reference to the current player's game object
