@@ -23,24 +23,38 @@ const config = {
 
 const game = new Phaser.Game(config);
 
-// Placeholder sound/music keys
+// Updated sound/music keys
 const SOUND_LASER = 'sndLaser';
 const SOUND_EXPLODE_S = 'sndExplodeS';
 const SOUND_EXPLODE_L = 'sndExplodeL';
-const SOUND_PLAYER_HIT = 'sndHit';
+const SOUND_ASTEROID_HITS = [
+    'sndAsteroid1', 'sndAsteroid2', 'sndAsteroid3', 'sndAsteroid4',
+    'sndAsteroid5', 'sndAsteroid6', 'sndAsteroid7', 'sndAsteroid8'
+];
+const SOUND_PLAYER_DEATH = 'sndPlayerDeath';
+const SOUND_PLAYER_RESPAWN = 'sndRespawn';
+const SOUND_GAME_WIN = 'sndWin';
 const MUSIC_BACKGROUND = 'musicBgm';
 
 function preload() {
     console.log("Preloading assets...");
-    // --- IMPORTANT: Replace these paths with your actual asset paths --- 
-    this.load.audio(SOUND_LASER, 'assets/sounds/laser.wav');
-    this.load.audio(SOUND_EXPLODE_S, 'assets/sounds/explode_small.wav');
-    this.load.audio(SOUND_EXPLODE_L, 'assets/sounds/explode_large.wav');
-    this.load.audio(SOUND_PLAYER_HIT, 'assets/sounds/player_hit.wav');
-    this.load.audio(MUSIC_BACKGROUND, 'assets/music/music_loop.mp3'); // Or .ogg, .wav
+    // Load sounds from 'media/' folder
+    // this.load.audio(SOUND_LASER, 'assets/sounds/laser.wav'); // Keep or replace if you have it
+    // this.load.audio(SOUND_EXPLODE_S, 'assets/sounds/explode_small.wav'); // Keep or replace if you have it
+    // this.load.audio(SOUND_EXPLODE_L, 'assets/sounds/explode_large.wav'); // Keep or replace if you have it
+    
+    this.load.audio(MUSIC_BACKGROUND, 'media/Pixelated.mp3');
+    this.load.audio(SOUND_GAME_WIN, 'media/win.mp3');
+    this.load.audio(SOUND_PLAYER_DEATH, 'media/ship_dies.mp3');
+    this.load.audio(SOUND_PLAYER_RESPAWN, 'media/respawn.mp3');
+    
+    // Load numbered asteroid hit sounds
+    for (let i = 0; i < 8; i++) {
+        this.load.audio(SOUND_ASTEROID_HITS[i], `media/${i + 1}.mp3`);
+    }
 
-    // TODO: Load heart image for lives display
-    // Example: this.load.image('heart', 'assets/images/heart.png');
+    // Load heart image if you have one
+    // this.load.image('heart', 'media/heart.png');
 }
 
 // Use a variable to hold the reference to the current player's game object
@@ -64,14 +78,16 @@ function create() {
     // Position the lives group (adjust x, y as needed)
     // updateLivesDisplay(self, PLAYER_START_LIVES); // Initial display (needs PLAYER_START_LIVES constant)
 
-    // Play Background Music (if loaded)
-    if (self.cache.audio.exists(MUSIC_BACKGROUND)) {
-        self.sound.play(MUSIC_BACKGROUND, {
-            loop: true,
-            volume: 0.4 // Adjust volume as needed
-        });
+    // Play Background Music
+    if (this.cache.audio.exists(MUSIC_BACKGROUND)) {
+        this.sound.play(MUSIC_BACKGROUND, { loop: true, volume: 0.4 });
     } else {
         console.warn('Background music not loaded!');
+    }
+
+    // Initialize lives display (ensure PLAYER_START_LIVES constant is available)
+    if (typeof PLAYER_START_LIVES !== 'undefined') {
+        updateLivesDisplay(this, PLAYER_START_LIVES); 
     }
 
     // --- Socket.IO Event Listeners --- 
@@ -225,26 +241,32 @@ function create() {
         });
     });
 
-    // Sound Effect Listeners
+    // Update Sound Effect Listeners
     socket.on('laserFired', function(data) {
-        // Check if sound asset is loaded before playing
+        // Play laser sound if you have one and it's loaded
         if (self.cache.audio.exists(SOUND_LASER)) { 
-            self.sound.play(SOUND_LASER, { volume: 0.3 }); // Play laser sound (adjust volume)
+            self.sound.play(SOUND_LASER, { volume: 0.3 });
         }
     });
 
     socket.on('asteroidDestroyed', function(data) {
-        // Choose sound based on asteroid stage
-        const soundKey = (data.stage === ASTEROID_STAGE_SMALL) ? SOUND_EXPLODE_S : SOUND_EXPLODE_L;
-        if (self.cache.audio.exists(soundKey)) {
-             self.sound.play(soundKey, { volume: 0.5 }); // Play appropriate explosion sound
+        // Play a random asteroid hit sound
+        const randomIndex = Math.floor(Math.random() * SOUND_ASTEROID_HITS.length);
+        const randomSoundKey = SOUND_ASTEROID_HITS[randomIndex];
+        if (self.cache.audio.exists(randomSoundKey)) {
+             self.sound.play(randomSoundKey, { volume: 0.5 });
+        } else {
+            console.warn(`Asteroid sound not loaded: ${randomSoundKey}`);
         }
         // TODO: Add explosion particle effect at data.x, data.y
     });
 
     socket.on('playerHit', function(data) {
-         if (self.cache.audio.exists(SOUND_PLAYER_HIT)) {
-            self.sound.play(SOUND_PLAYER_HIT, { volume: 0.7 }); // Play player hit sound
+        // Play player death sound
+         if (self.cache.audio.exists(SOUND_PLAYER_DEATH)) {
+            self.sound.play(SOUND_PLAYER_DEATH, { volume: 0.7 });
+         } else {
+             console.warn('Player death sound not loaded!');
          }
          // TODO: Add player explosion particle effect at data.x, data.y
          // If the hit player is the current player, maybe add screen shake?
@@ -253,21 +275,33 @@ function create() {
          }
     });
 
-    // Game Over Listener
+    // Listen for player respawn sound event
+    socket.on('playerRespawned', function(data) {
+        // Optional: Only play for the respawning player or everyone?
+        // if (data.playerId === socket.id) { ... }
+        if (self.cache.audio.exists(SOUND_PLAYER_RESPAWN)) {
+            self.sound.play(SOUND_PLAYER_RESPAWN, { volume: 0.6 });
+        } else {
+            console.warn('Player respawn sound not loaded!');
+        }
+    });
+
+    // Update Game Over Listener for sound
     socket.on('gameOver', function(data) {
         console.log('Game Over! Winner:', data.winnerId);
-        // Stop player input (optional)
         self.input.keyboard.enabled = false;
-        // Display game over message
-        const winnerText = (data.winnerId === socket.id) ? 'You Win!' : 'Player ' + data.winnerId.substring(0, 4) + ' Wins!'; // Show partial ID for others
+        const winnerText = (data.winnerId === socket.id) ? 'You Win!' : 'Player ' + data.winnerId.substring(0, 4) + ' Wins!';
         self.add.text(config.width / 2, config.height / 2, winnerText, { 
-            fontSize: '48px', 
-            fill: '#00ff00', 
-            backgroundColor: '#000000' 
+            fontSize: '48px', fill: '#00ff00', backgroundColor: '#000000' 
         }).setOrigin(0.5);
         
-        // Optionally stop background music
-        // self.sound.stopByKey(MUSIC_BACKGROUND);
+        // Stop background music and play win sound
+        self.sound.stopByKey(MUSIC_BACKGROUND);
+        if (self.cache.audio.exists(SOUND_GAME_WIN)) {
+            self.sound.play(SOUND_GAME_WIN, { volume: 0.8 });
+        } else {
+             console.warn('Win sound not loaded!');
+        }
     });
 
     // --- Keyboard Input Setup --- 

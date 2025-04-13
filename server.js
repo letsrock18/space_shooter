@@ -203,8 +203,8 @@ gameLoopInterval = setInterval(() => {
         player.velocityY = 0;
         player.rotation = 0;
         console.log(`Player ${id} respawned`);
-        // Optionally notify client about respawn for effects
-        // io.emit('playerRespawned', { playerId: id });
+        // Emit event for client sound/effect
+        io.emit('playerRespawned', { playerId: id });
     });
 
     // Spawn initial/new asteroids if needed
