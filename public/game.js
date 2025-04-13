@@ -254,7 +254,7 @@ function create() {
         const randomIndex = Math.floor(Math.random() * SOUND_ASTEROID_HITS.length);
         const randomSoundKey = SOUND_ASTEROID_HITS[randomIndex];
         if (self.cache.audio.exists(randomSoundKey)) {
-             self.sound.play(randomSoundKey, { volume: 0.5 });
+             self.sound.play(randomSoundKey, { volume: 0.2 });
         } else {
             console.warn(`Asteroid sound not loaded: ${randomSoundKey}`);
         }
