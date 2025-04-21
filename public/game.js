@@ -61,13 +61,24 @@ function preload() {
     // this.load.image('heart', 'media/heart.png'); // Path relative to public
 }
 
-// Use a variable to hold the reference to the current player's game object
+// Global game variables
 let playerGameObject = null;
-let scoreText = null; // Add variable for score text object
-let livesGroup = null; // For heart icons
+let scoreText = null;
+let livesGroup = null;
 
-// Variables to track touch control state
-let shootButton = null; // Keep track of the shoot button object
+// Joystick related variables
+let joystickBase = null;
+let joystickNub = null;
+let joystickActive = false;
+let joystickPointerId = null;
+let joystickStartX = 0;
+let joystickStartY = 0;
+const joystickRadius = 50; // Max distance nub can move from base center
+const joystickNubRadius = 20;
+const joystickBaseRadius = 60;
+
+// Input state derived from joystick/keyboard
+let currentInput = { left: false, right: false, up: false };
 
 function create() {
     console.log("Creating game objects...");
@@ -303,42 +314,12 @@ function create() {
 
     // --- Input Setup ---
     if (this.sys.game.device.input.touch) {
-        console.log("Touch input detected, setting up mobile controls.");
-        setupMobileControls(self); // Setup shoot button and tap listener
+        console.log("Touch input detected, setting up virtual joystick.");
+        setupMobileControls(this); // Pass the scene context
     } else {
         console.log("No touch input detected, using keyboard controls.");
         this.cursors = this.input.keyboard.createCursorKeys();
     }
-
-    // Tap listener for movement (added here for scene context)
-    this.input.on('pointerdown', (pointer) => {
-        // Only act if touch is enabled and the player exists
-        if (!this.sys.game.device.input.touch || !playerGameObject) return;
-
-        // Check if the tap hit the shoot button
-        // We need to check if the pointer's target was the shoot button graphic
-        // This requires shootButton to be accessible here. Let's check its graphic directly.
-        let hitShootButton = false;
-        if (shootButton && shootButton.getBounds().contains(pointer.x, pointer.y)) {
-             hitShootButton = true;
-             // Shoot logic is handled by the button's own 'pointerdown' event
-        }
-
-        if (!hitShootButton) {
-            // Tap is for movement
-            const worldPoint = pointer.positionToCamera(this.cameras.main);
-            const angle = Phaser.Math.Angle.Between(
-                playerGameObject.x, playerGameObject.y,
-                worldPoint.x, worldPoint.y
-            );
-
-            // Send angle to server
-            socket.emit('playerSetAngle', { angle: angle });
-
-            // Send one burst of thrust
-            socket.emit('playerInput', { up: true, left: false, right: false });
-        }
-    });
 
     // --- Helper function to add a player visual --- 
     function addPlayer(scene, playerInfo, isCurrentUser) {
@@ -434,54 +415,122 @@ function create() {
     }
 }
 
-// --- Function to Setup Mobile Controls ---
+// --- Function to Setup Mobile Controls (Virtual Joystick) ---
 function setupMobileControls(scene) {
-    const buttonSize = 60;
-    const buttonPadding = 20;
-    const buttonAlpha = 0.5;
-    const shootButtonColor = 0xff0000; // Red for shoot
+    const baseAlpha = 0.3;
+    const nubAlpha = 0.6;
+    const baseColor = 0xcccccc;
+    const nubColor = 0x999999;
+    const padding = 20;
 
-    // Bottom-right corner for shoot
-    const shootButtonX = config.width - buttonPadding - buttonSize / 2;
-    const shootButtonY = config.height - buttonPadding - buttonSize / 2;
+    // Bottom-left corner for joystick
+    const baseX = padding + joystickBaseRadius;
+    const baseY = config.height - padding - joystickBaseRadius;
 
-    // Shoot Button
-    shootButton = scene.add.rectangle(shootButtonX, shootButtonY, buttonSize, buttonSize, shootButtonColor, buttonAlpha)
-        .setInteractive()
-        .setScrollFactor(0); // Keep fixed on screen
+    // Create Joystick Base (larger, semi-transparent circle)
+    joystickBase = scene.add.circle(baseX, baseY, joystickBaseRadius, baseColor, baseAlpha)
+        .setScrollFactor(0)
+        .setInteractive(); // Make the base interactive
+    joystickBase.input.hitArea.setTo(0, 0, joystickBaseRadius * 2, joystickBaseRadius * 2); // Ensure hit area is correct size
 
-    shootButton.on('pointerdown', () => {
-        // Send shoot event immediately on press
-        socket.emit('playerShoot');
-        shootButton.setFillStyle(shootButtonColor, 0.8);
+    // Create Joystick Nub (smaller, more opaque circle)
+    joystickNub = scene.add.circle(baseX, baseY, joystickNubRadius, nubColor, nubAlpha)
+        .setScrollFactor(0);
+
+    // --- Joystick Input Logic ---
+    joystickBase.on('pointerdown', (pointer) => {
+        if (!joystickActive) { // Activate joystick only if not already active
+            joystickActive = true;
+            joystickPointerId = pointer.id;
+            joystickStartX = baseX;
+            joystickStartY = baseY;
+            // Snap nub to initial touch position within radius
+            updateJoystickNub(pointer.x, pointer.y);
+        }
     });
-    shootButton.on('pointerup', () => {
-         shootButton.setFillStyle(shootButtonColor, buttonAlpha);
-     });
-    shootButton.on('pointerout', () => {
-         // Reset visual if pointer slides off while pressed
-         shootButton.setFillStyle(shootButtonColor, buttonAlpha);
+
+    // Use scene's global pointer move/up listeners
+    scene.input.on('pointermove', (pointer) => {
+        if (joystickActive && pointer.id === joystickPointerId) {
+            updateJoystickNub(pointer.x, pointer.y);
+        }
+    });
+
+    scene.input.on('pointerup', (pointer) => {
+        if (joystickActive && pointer.id === joystickPointerId) {
+            resetJoystick();
+        }
+    });
+     scene.input.on('pointerupoutside', (pointer) => {
+         if (joystickActive && pointer.id === joystickPointerId) {
+             resetJoystick();
+         }
      });
 
-    // Add shoot button label (optional)
-    scene.add.text(shootButtonX, shootButtonY, 'S', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
 
-    // No global pointer up needed for movement cancellation anymore
+    // Helper to update nub position and calculate input
+    function updateJoystickNub(currentX, currentY) {
+        const deltaX = currentX - joystickStartX;
+        const deltaY = currentY - joystickStartY;
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        const angle = Math.atan2(deltaY, deltaX);
+
+        // Clamp nub position within the base radius
+        const clampedDistance = Math.min(distance, joystickRadius);
+        const nubX = joystickStartX + Math.cos(angle) * clampedDistance;
+        const nubY = joystickStartY + Math.sin(angle) * clampedDistance;
+        joystickNub.setPosition(nubX, nubY);
+
+        // Determine input based on joystick drag
+        // Reset first
+        currentInput.left = false;
+        currentInput.right = false;
+        currentInput.up = false;
+
+        if (clampedDistance > joystickNubRadius * 0.5) { // Require minimum drag distance
+            currentInput.up = true; // Thrust if dragged significantly
+
+            // Determine rotation based on angle (simplified)
+            // Convert angle to degrees for easier comparison
+            let degrees = Phaser.Math.RadToDeg(angle);
+            if (degrees < 0) degrees += 360;
+
+            // Define angle ranges for left/right input (adjust sensitivity)
+            if (degrees > 100 && degrees < 260) { // Left half (roughly)
+                 currentInput.left = true;
+            } else if (degrees < 80 || degrees > 280) { // Right half (roughly)
+                 currentInput.right = true;
+            }
+            // No rotation input if dragging straight up/down
+        }
+    }
+
+    // Helper to reset joystick state and visuals
+    function resetJoystick() {
+        joystickActive = false;
+        joystickPointerId = null;
+        joystickNub.setPosition(joystickBase.x, joystickBase.y);
+        currentInput = { left: false, right: false, up: false }; // Reset input state
+    }
 
 } // End of setupMobileControls()
 
 function update() {
-    // Keyboard input handling (only if touch is not detected)
-    if (!this.sys.game.device.input.touch && this.cursors && playerGameObject) {
-        const input = {
-            left: this.cursors.left.isDown,
-            right: this.cursors.right.isDown,
-            up: this.cursors.up.isDown,
-        };
-        // Emit the keyboard input state continuously
-        socket.emit('playerInput', input);
+    // Determine input source
+    if (this.sys.game.device.input.touch) {
+        // Touch input is implicitly handled by the joystick listeners updating currentInput
+        // If joystick is not active, currentInput is {false, false, false}
+    } else if (this.cursors) {
+        // Use keyboard cursors if touch not detected
+        currentInput.left = this.cursors.left.isDown;
+        currentInput.right = this.cursors.right.isDown;
+        currentInput.up = this.cursors.up.isDown;
     }
-    // Touch input (movement and shooting) is handled by 'pointerdown' events directly
+
+    // Emit the final input state
+    if (playerGameObject) {
+        socket.emit('playerInput', currentInput);
+    }
 }
 
 // Add constants needed by client-side logic (copied from server)

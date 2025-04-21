@@ -74,11 +74,11 @@ io.on('connection', (socket) => {
   socket.emit('currentPlayers', players); // Send current players to new client
   socket.broadcast.emit('newPlayer', players[socket.id]); // Notify others
 
-  // Handle player movement input (Thrust from keyboard/tap, Rotation from keyboard)
+  // Handle player movement input (Keyboard or Joystick)
   socket.on('playerInput', function (inputData) {
     const player = players[socket.id];
     if (player && !player.isDead) {
-        // Handle Rotation (Keyboard Only)
+        // Handle Rotation (Keyboard OR Joystick)
         if (inputData.left) {
             player.rotation -= PLAYER_ROTATION_SPEED;
         }
@@ -86,9 +86,8 @@ io.on('connection', (socket) => {
             player.rotation += PLAYER_ROTATION_SPEED;
         }
 
-        // Handle Thrust (Keyboard OR Tap)
+        // Handle Thrust (Keyboard OR Joystick)
         if (inputData.up) {
-            // Use the player's CURRENT rotation (set by keyboard or playerSetAngle)
             const angle = player.rotation - Math.PI / 2;
             const accelerationX = Math.cos(angle) * PLAYER_ACCELERATION;
             const accelerationY = Math.sin(angle) * PLAYER_ACCELERATION;
@@ -98,44 +97,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle setting player angle directly from tap
-  socket.on('playerSetAngle', (data) => {
-      const player = players[socket.id];
-      if (player && !player.isDead && data && typeof data.angle === 'number') {
-          // Directly set rotation based on tap angle
-          // Add PI/2 because Phaser's angle is 0 rad east, while ship graphic 0 rad is north
-          player.rotation = data.angle + Math.PI / 2;
-      }
-  });
-
   // Handle disconnect
   socket.on('disconnect', () => {
     console.log('user disconnected:', socket.id);
     delete players[socket.id];
     io.emit('playerDisconnected', socket.id);
     console.log('Remaining players:', Object.keys(players).length);
-  });
-
-  // Handle player shooting request
-  socket.on('playerShoot', () => {
-    const player = players[socket.id];
-    const now = Date.now();
-    // Check if player exists, is alive, and cooldown has passed
-    if (player && !player.isDead && now - player.lastShotTime > SHOOT_DELAY) {
-        player.lastShotTime = now;
-        const laserId = nextLaserId++;
-        const angle = player.rotation - Math.PI / 2;
-        lasers[laserId] = {
-            id: laserId,
-            ownerId: socket.id,
-            x: player.x + Math.cos(angle) * 15,
-            y: player.y + Math.sin(angle) * 15,
-            velocityX: Math.cos(angle) * LASER_SPEED + player.velocityX * 0.5, // Add some ship velocity
-            velocityY: Math.sin(angle) * LASER_SPEED + player.velocityY * 0.5
-        };
-        // Emit laser fire event for sound on client
-        io.emit('laserFired', { x: lasers[laserId].x, y: lasers[laserId].y });
-    }
   });
 });
 
@@ -267,7 +234,22 @@ gameLoopInterval = setInterval(() => {
         if (player.y < 0) player.y = GAME_HEIGHT;
         if (player.y > GAME_HEIGHT) player.y = 0;
 
-        // Rotation is now handled by 'playerInput' (keyboard) or 'playerSetAngle' (touch)
+        // Automatic Shooting Logic (Re-added)
+        if (now - player.lastShotTime > SHOOT_DELAY) {
+            player.lastShotTime = now;
+            const laserId = nextLaserId++;
+            const angle = player.rotation - Math.PI / 2;
+            lasers[laserId] = {
+                id: laserId,
+                ownerId: id, // Use player id from the loop
+                x: player.x + Math.cos(angle) * 15,
+                y: player.y + Math.sin(angle) * 15,
+                velocityX: Math.cos(angle) * LASER_SPEED + player.velocityX * 0.5, // Add some ship velocity
+                velocityY: Math.sin(angle) * LASER_SPEED + player.velocityY * 0.5
+            };
+            // Emit laser fire event for sound on client
+            io.emit('laserFired', { x: lasers[laserId].x, y: lasers[laserId].y });
+        }
     });
 
     // Update Lasers
