@@ -74,19 +74,21 @@ io.on('connection', (socket) => {
   socket.emit('currentPlayers', players); // Send current players to new client
   socket.broadcast.emit('newPlayer', players[socket.id]); // Notify others
 
-  // Handle player input
+  // Handle player movement input (Thrust from keyboard/tap, Rotation from keyboard)
   socket.on('playerInput', function (inputData) {
     const player = players[socket.id];
-    if (player && !player.isDead) { // Only process input if alive
-        // Handle rotation
+    if (player && !player.isDead) {
+        // Handle Rotation (Keyboard Only)
         if (inputData.left) {
             player.rotation -= PLAYER_ROTATION_SPEED;
         }
         if (inputData.right) {
             player.rotation += PLAYER_ROTATION_SPEED;
         }
-        // Handle thrust
+
+        // Handle Thrust (Keyboard OR Tap)
         if (inputData.up) {
+            // Use the player's CURRENT rotation (set by keyboard or playerSetAngle)
             const angle = player.rotation - Math.PI / 2;
             const accelerationX = Math.cos(angle) * PLAYER_ACCELERATION;
             const accelerationY = Math.sin(angle) * PLAYER_ACCELERATION;
@@ -94,6 +96,16 @@ io.on('connection', (socket) => {
             player.velocityY += accelerationY;
         }
     }
+  });
+
+  // Handle setting player angle directly from tap
+  socket.on('playerSetAngle', (data) => {
+      const player = players[socket.id];
+      if (player && !player.isDead && data && typeof data.angle === 'number') {
+          // Directly set rotation based on tap angle
+          // Add PI/2 because Phaser's angle is 0 rad east, while ship graphic 0 rad is north
+          player.rotation = data.angle + Math.PI / 2;
+      }
   });
 
   // Handle disconnect
@@ -255,7 +267,7 @@ gameLoopInterval = setInterval(() => {
         if (player.y < 0) player.y = GAME_HEIGHT;
         if (player.y > GAME_HEIGHT) player.y = 0;
 
-        // OLD Shooting logic removed from here
+        // Rotation is now handled by 'playerInput' (keyboard) or 'playerSetAngle' (touch)
     });
 
     // Update Lasers

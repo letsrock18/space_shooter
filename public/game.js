@@ -6,6 +6,10 @@ const config = {
     width: 800,
     height: 600,
     parent: 'phaser-example', // Optional: If you have a div with this id in index.html
+    scale: {
+        mode: Phaser.Scale.FIT, // Scale to fit the screen
+        autoCenter: Phaser.Scale.CENTER_BOTH // Center the game canvas
+    },
     physics: {
         default: 'arcade',
         arcade: {
@@ -58,31 +62,22 @@ function preload() {
 }
 
 // Use a variable to hold the reference to the current player's game object
-let playerGameObject = null; 
+let playerGameObject = null;
 let scoreText = null; // Add variable for score text object
-let livesText = null; // For displaying lives
 let livesGroup = null; // For heart icons
 
 // Variables to track touch control state
-let touchLeft = false;
-let touchRight = false;
-let touchUp = false;
-// Note: touchShoot is handled via direct event emit, not a continuous state
+let shootButton = null; // Keep track of the shoot button object
 
 function create() {
     console.log("Creating game objects...");
-    // 'this' refers to the Scene context
-    const self = this;
-    this.players = this.add.group(); // Group to manage player objects
-    this.lasers = this.add.group(); // Group to manage laser visuals
-    this.asteroids = this.add.group(); // Group to manage asteroid visuals
+    const self = this; // 'this' refers to the Scene context
+    this.players = this.add.group();
+    this.lasers = this.add.group();
+    this.asteroids = this.add.group();
 
-    // Add Score Text
-    scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '20px', fill: '#FFF' }).setScrollFactor(0); // Keep UI fixed
-    // Lives Display (Hearts)
-    livesGroup = this.add.group(); // Group to hold heart icons
-    // updateLivesDisplay needs to be called after player state received
-    // Initial placeholder or call in 'currentPlayers' handler
+    scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '20px', fill: '#FFF' }).setScrollFactor(0);
+    livesGroup = this.add.group();
 
     // Play Background Music
     if (this.cache.audio.exists(MUSIC_BACKGROUND)) {
@@ -91,21 +86,19 @@ function create() {
         console.warn('Background music not loaded!');
     }
 
-    // Initialize lives display (ensure PLAYER_START_LIVES constant is available)
-    if (typeof PLAYER_START_LIVES !== 'undefined') {
-        // We'll update lives properly when player data arrives
-        // updateLivesDisplay(this, PLAYER_START_LIVES);
-    }
+    // Lives display updated on player data arrival
 
-    // --- Socket.IO Event Listeners --- 
-
+    // --- Socket.IO Event Listeners ---
     socket.on('currentPlayers', function (players) {
         console.log("Received currentPlayers:", players);
         Object.keys(players).forEach(function (id) {
-            if (players[id].playerId === socket.id) {
-                playerGameObject = addPlayer(self, players[id], true);
-            } else {
-                addPlayer(self, players[id], false);
+            const isCurrentUser = players[id].playerId === socket.id;
+            const addedPlayer = addPlayer(self, players[id], isCurrentUser);
+            if (isCurrentUser) {
+                playerGameObject = addedPlayer;
+                // Update initial UI for current player
+                if (scoreText) scoreText.setText('Score: ' + players[id].score);
+                updateLivesDisplay(self, players[id].lives);
             }
         });
     });
@@ -126,7 +119,6 @@ function create() {
 
     // Listen for combined game state updates
     socket.on('gameStateUpdate', function (gameState) {
-        // Update Players
         const serverPlayers = gameState.players;
         const clientPlayerIds = self.players.getChildren().map(p => p.playerId);
         const serverPlayerIds = Object.keys(serverPlayers);
@@ -157,18 +149,16 @@ function create() {
                 
                 // Update UI for current player
                 if (serverPlayer.playerId === socket.id) {
-                    scoreText.setText('Score: ' + serverPlayer.score);
-                    // Update lives display using hearts
-                    updateLivesDisplay(self, serverPlayer.lives); 
+                    if (scoreText) scoreText.setText('Score: ' + serverPlayer.score);
+                    updateLivesDisplay(self, serverPlayer.lives);
                 }
             } else if (!serverPlayer.isDead) { // Add player only if not dead initially
                 // Handle case where player exists on server but not client
                 const addedPlayer = addPlayer(self, serverPlayer, serverPlayer.playerId === socket.id);
                 if (serverPlayer.playerId === socket.id) {
                     playerGameObject = addedPlayer;
-                    scoreText.setText('Score: ' + serverPlayer.score);
-                    // Update lives display using hearts
-                    updateLivesDisplay(self, serverPlayer.lives); 
+                    if (scoreText) scoreText.setText('Score: ' + serverPlayer.score);
+                    updateLivesDisplay(self, serverPlayer.lives);
                 }
                  // Set initial invincibility alpha if needed
                 if (serverPlayer.isInvincible) addedPlayer.setAlpha(0.5);
@@ -312,16 +302,43 @@ function create() {
     });
 
     // --- Input Setup ---
-    // Check for touch support
     if (this.sys.game.device.input.touch) {
-        console.log("Touch input detected, setting up touch controls.");
-        setupTouchControls(self);
-        // Optionally disable keyboard if touch is primary
-        // this.input.keyboard.enabled = false;
+        console.log("Touch input detected, setting up mobile controls.");
+        setupMobileControls(self); // Setup shoot button and tap listener
     } else {
         console.log("No touch input detected, using keyboard controls.");
         this.cursors = this.input.keyboard.createCursorKeys();
     }
+
+    // Tap listener for movement (added here for scene context)
+    this.input.on('pointerdown', (pointer) => {
+        // Only act if touch is enabled and the player exists
+        if (!this.sys.game.device.input.touch || !playerGameObject) return;
+
+        // Check if the tap hit the shoot button
+        // We need to check if the pointer's target was the shoot button graphic
+        // This requires shootButton to be accessible here. Let's check its graphic directly.
+        let hitShootButton = false;
+        if (shootButton && shootButton.getBounds().contains(pointer.x, pointer.y)) {
+             hitShootButton = true;
+             // Shoot logic is handled by the button's own 'pointerdown' event
+        }
+
+        if (!hitShootButton) {
+            // Tap is for movement
+            const worldPoint = pointer.positionToCamera(this.cameras.main);
+            const angle = Phaser.Math.Angle.Between(
+                playerGameObject.x, playerGameObject.y,
+                worldPoint.x, worldPoint.y
+            );
+
+            // Send angle to server
+            socket.emit('playerSetAngle', { angle: angle });
+
+            // Send one burst of thrust
+            socket.emit('playerInput', { up: true, left: false, right: false });
+        }
+    });
 
     // --- Helper function to add a player visual --- 
     function addPlayer(scene, playerInfo, isCurrentUser) {
@@ -417,154 +434,55 @@ function create() {
     }
 }
 
-// --- Function to Setup Touch Controls ---
-function setupTouchControls(scene) {
+// --- Function to Setup Mobile Controls ---
+function setupMobileControls(scene) {
     const buttonSize = 60;
     const buttonPadding = 20;
     const buttonAlpha = 0.5;
-    const buttonColor = 0xcccccc; // Light gray
-    const buttonPressedColor = 0x888888; // Darker gray
+    const shootButtonColor = 0xff0000; // Red for shoot
 
-    // Bottom-left corner for rotation
-    const leftButtonX = buttonPadding + buttonSize / 2;
-    const rotateY = config.height - buttonPadding - buttonSize / 2;
-    const rightButtonX = leftButtonX + buttonSize + buttonPadding;
-
-    // Bottom-right corner for thrust and shoot
+    // Bottom-right corner for shoot
     const shootButtonX = config.width - buttonPadding - buttonSize / 2;
-    const thrustButtonX = shootButtonX - buttonSize - buttonPadding;
-
-    // Rotate Left Button
-    const leftButton = scene.add.rectangle(leftButtonX, rotateY, buttonSize, buttonSize, buttonColor, buttonAlpha)
-        .setInteractive()
-        .setScrollFactor(0); // Keep fixed on screen
-
-    leftButton.on('pointerdown', () => {
-        touchLeft = true;
-        leftButton.setFillStyle(buttonColor, 0.8); // Indicate press
-    });
-    leftButton.on('pointerup', () => {
-        touchLeft = false;
-        leftButton.setFillStyle(buttonColor, buttonAlpha);
-    });
-    leftButton.on('pointerout', () => { // Handle pointer sliding off
-        if (touchLeft) {
-           touchLeft = false;
-           leftButton.setFillStyle(buttonColor, buttonAlpha);
-        }
-    });
-
-    // Rotate Right Button
-    const rightButton = scene.add.rectangle(rightButtonX, rotateY, buttonSize, buttonSize, buttonColor, buttonAlpha)
-        .setInteractive()
-        .setScrollFactor(0);
-
-    rightButton.on('pointerdown', () => {
-        touchRight = true;
-        rightButton.setFillStyle(buttonColor, 0.8);
-    });
-    rightButton.on('pointerup', () => {
-        touchRight = false;
-        rightButton.setFillStyle(buttonColor, buttonAlpha);
-    });
-     rightButton.on('pointerout', () => {
-        if (touchRight) {
-           touchRight = false;
-           rightButton.setFillStyle(buttonColor, buttonAlpha);
-        }
-    });
-
-    // Thrust Button
-    const thrustButton = scene.add.rectangle(thrustButtonX, rotateY, buttonSize, buttonSize, buttonColor, buttonAlpha)
-        .setInteractive()
-        .setScrollFactor(0);
-
-    thrustButton.on('pointerdown', () => {
-        touchUp = true;
-        thrustButton.setFillStyle(buttonColor, 0.8);
-    });
-    thrustButton.on('pointerup', () => {
-        touchUp = false;
-        thrustButton.setFillStyle(buttonColor, buttonAlpha);
-    });
-     thrustButton.on('pointerout', () => {
-        if (touchUp) {
-           touchUp = false;
-           thrustButton.setFillStyle(buttonColor, buttonAlpha);
-        }
-    });
+    const shootButtonY = config.height - buttonPadding - buttonSize / 2;
 
     // Shoot Button
-    const shootButton = scene.add.rectangle(shootButtonX, rotateY, buttonSize, buttonSize, 0xff0000, buttonAlpha) // Red for shoot
+    shootButton = scene.add.rectangle(shootButtonX, shootButtonY, buttonSize, buttonSize, shootButtonColor, buttonAlpha)
         .setInteractive()
-        .setScrollFactor(0);
+        .setScrollFactor(0); // Keep fixed on screen
 
     shootButton.on('pointerdown', () => {
         // Send shoot event immediately on press
         socket.emit('playerShoot');
-        shootButton.setFillStyle(0xff0000, 0.8);
+        shootButton.setFillStyle(shootButtonColor, 0.8);
     });
-     shootButton.on('pointerup', () => {
-         shootButton.setFillStyle(0xff0000, buttonAlpha);
+    shootButton.on('pointerup', () => {
+         shootButton.setFillStyle(shootButtonColor, buttonAlpha);
      });
-      shootButton.on('pointerout', () => {
-         // No state change needed, just visual reset
-         shootButton.setFillStyle(0xff0000, buttonAlpha);
+    shootButton.on('pointerout', () => {
+         // Reset visual if pointer slides off while pressed
+         shootButton.setFillStyle(shootButtonColor, buttonAlpha);
      });
 
-     // Add button labels (optional)
-    scene.add.text(leftButtonX, rotateY, 'L', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
-    scene.add.text(rightButtonX, rotateY, 'R', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
-    scene.add.text(thrustButtonX, rotateY, 'T', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
-    scene.add.text(shootButtonX, rotateY, 'S', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
+    // Add shoot button label (optional)
+    scene.add.text(shootButtonX, shootButtonY, 'S', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
 
+    // No global pointer up needed for movement cancellation anymore
 
-    // Global pointer up to catch cases where the finger lifts off screen
-    scene.input.on('pointerup', () => {
-        if (touchLeft) {
-            touchLeft = false;
-            leftButton.setFillStyle(buttonColor, buttonAlpha);
-        }
-        if (touchRight) {
-            touchRight = false;
-            rightButton.setFillStyle(buttonColor, buttonAlpha);
-        }
-        if (touchUp) {
-            touchUp = false;
-            thrustButton.setFillStyle(buttonColor, buttonAlpha);
-        }
-        // Shoot button visual reset is handled by its own pointerup/out
-    });
-
-} // End of setupTouchControls()
+} // End of setupMobileControls()
 
 function update() {
-    // Determine input based on touch or keyboard
-    let input = {
-        left: false,
-        right: false,
-        up: false
-    };
-
-    if (this.sys.game.device.input.touch) {
-        // Use touch state variables
-        input.left = touchLeft;
-        input.right = touchRight;
-        input.up = touchUp;
-    } else if (this.cursors) {
-        // Use keyboard cursors if they exist
-        input.left = this.cursors.left.isDown;
-        input.right = this.cursors.right.isDown;
-        input.up = this.cursors.up.isDown;
-    }
-
-    // Emit the combined input state continuously
-    // (Server handles movement based on this state)
-    if (playerGameObject) { // Only send if player exists
+    // Keyboard input handling (only if touch is not detected)
+    if (!this.sys.game.device.input.touch && this.cursors && playerGameObject) {
+        const input = {
+            left: this.cursors.left.isDown,
+            right: this.cursors.right.isDown,
+            up: this.cursors.up.isDown,
+        };
+        // Emit the keyboard input state continuously
         socket.emit('playerInput', input);
     }
-    // Shooting is handled by the 'playerShoot' event emitted directly from the button press
-} 
+    // Touch input (movement and shooting) is handled by 'pointerdown' events directly
+}
 
 // Add constants needed by client-side logic (copied from server)
 const ASTEROID_STAGE_SMALL = 1;
