@@ -103,6 +103,28 @@ io.on('connection', (socket) => {
     io.emit('playerDisconnected', socket.id);
     console.log('Remaining players:', Object.keys(players).length);
   });
+
+  // Handle player shooting request
+  socket.on('playerShoot', () => {
+    const player = players[socket.id];
+    const now = Date.now();
+    // Check if player exists, is alive, and cooldown has passed
+    if (player && !player.isDead && now - player.lastShotTime > SHOOT_DELAY) {
+        player.lastShotTime = now;
+        const laserId = nextLaserId++;
+        const angle = player.rotation - Math.PI / 2;
+        lasers[laserId] = {
+            id: laserId,
+            ownerId: socket.id,
+            x: player.x + Math.cos(angle) * 15,
+            y: player.y + Math.sin(angle) * 15,
+            velocityX: Math.cos(angle) * LASER_SPEED + player.velocityX * 0.5, // Add some ship velocity
+            velocityY: Math.sin(angle) * LASER_SPEED + player.velocityY * 0.5
+        };
+        // Emit laser fire event for sound on client
+        io.emit('laserFired', { x: lasers[laserId].x, y: lasers[laserId].y });
+    }
+  });
 });
 
 // Helper function to generate asteroid shape
@@ -233,22 +255,7 @@ gameLoopInterval = setInterval(() => {
         if (player.y < 0) player.y = GAME_HEIGHT;
         if (player.y > GAME_HEIGHT) player.y = 0;
 
-        // Shooting logic
-        if (now - player.lastShotTime > SHOOT_DELAY) {
-            player.lastShotTime = now;
-            const laserId = nextLaserId++;
-            const angle = player.rotation - Math.PI / 2;
-            lasers[laserId] = {
-                id: laserId,
-                ownerId: id,
-                x: player.x + Math.cos(angle) * 15,
-                y: player.y + Math.sin(angle) * 15,
-                velocityX: Math.cos(angle) * LASER_SPEED + player.velocityX * 0.5, // Add some ship velocity
-                velocityY: Math.sin(angle) * LASER_SPEED + player.velocityY * 0.5
-            };
-            // Emit laser fire event for sound on client
-            io.emit('laserFired', { x: lasers[laserId].x, y: lasers[laserId].y });
-        }
+        // OLD Shooting logic removed from here
     });
 
     // Update Lasers

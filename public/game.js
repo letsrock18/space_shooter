@@ -63,6 +63,12 @@ let scoreText = null; // Add variable for score text object
 let livesText = null; // For displaying lives
 let livesGroup = null; // For heart icons
 
+// Variables to track touch control state
+let touchLeft = false;
+let touchRight = false;
+let touchUp = false;
+// Note: touchShoot is handled via direct event emit, not a continuous state
+
 function create() {
     console.log("Creating game objects...");
     // 'this' refers to the Scene context
@@ -72,11 +78,11 @@ function create() {
     this.asteroids = this.add.group(); // Group to manage asteroid visuals
 
     // Add Score Text
-    scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '20px', fill: '#FFF' });
+    scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '20px', fill: '#FFF' }).setScrollFactor(0); // Keep UI fixed
     // Lives Display (Hearts)
     livesGroup = this.add.group(); // Group to hold heart icons
-    // Position the lives group (adjust x, y as needed)
-    // updateLivesDisplay(self, PLAYER_START_LIVES); // Initial display (needs PLAYER_START_LIVES constant)
+    // updateLivesDisplay needs to be called after player state received
+    // Initial placeholder or call in 'currentPlayers' handler
 
     // Play Background Music
     if (this.cache.audio.exists(MUSIC_BACKGROUND)) {
@@ -87,7 +93,8 @@ function create() {
 
     // Initialize lives display (ensure PLAYER_START_LIVES constant is available)
     if (typeof PLAYER_START_LIVES !== 'undefined') {
-        updateLivesDisplay(this, PLAYER_START_LIVES); 
+        // We'll update lives properly when player data arrives
+        // updateLivesDisplay(this, PLAYER_START_LIVES);
     }
 
     // --- Socket.IO Event Listeners --- 
@@ -304,9 +311,17 @@ function create() {
         }
     });
 
-    // --- Keyboard Input Setup --- 
-    this.cursors = this.input.keyboard.createCursorKeys();
-    // We no longer need lastSentInput like before, we send continuously while pressed
+    // --- Input Setup ---
+    // Check for touch support
+    if (this.sys.game.device.input.touch) {
+        console.log("Touch input detected, setting up touch controls.");
+        setupTouchControls(self);
+        // Optionally disable keyboard if touch is primary
+        // this.input.keyboard.enabled = false;
+    } else {
+        console.log("No touch input detected, using keyboard controls.");
+        this.cursors = this.input.keyboard.createCursorKeys();
+    }
 
     // --- Helper function to add a player visual --- 
     function addPlayer(scene, playerInfo, isCurrentUser) {
@@ -396,22 +411,159 @@ function create() {
             } else { // Fallback to rectangle
                  heart = scene.add.rectangle(startX - i * heartSpacing, startY, 15, 15, 0xff0000); // width, height, color
             }
+            heart.setScrollFactor(0); // Keep hearts fixed on screen
             livesGroup.add(heart);
         }
     }
 }
 
+// --- Function to Setup Touch Controls ---
+function setupTouchControls(scene) {
+    const buttonSize = 60;
+    const buttonPadding = 20;
+    const buttonAlpha = 0.5;
+    const buttonColor = 0xcccccc; // Light gray
+    const buttonPressedColor = 0x888888; // Darker gray
+
+    // Bottom-left corner for rotation
+    const leftButtonX = buttonPadding + buttonSize / 2;
+    const rotateY = config.height - buttonPadding - buttonSize / 2;
+    const rightButtonX = leftButtonX + buttonSize + buttonPadding;
+
+    // Bottom-right corner for thrust and shoot
+    const shootButtonX = config.width - buttonPadding - buttonSize / 2;
+    const thrustButtonX = shootButtonX - buttonSize - buttonPadding;
+
+    // Rotate Left Button
+    const leftButton = scene.add.rectangle(leftButtonX, rotateY, buttonSize, buttonSize, buttonColor, buttonAlpha)
+        .setInteractive()
+        .setScrollFactor(0); // Keep fixed on screen
+
+    leftButton.on('pointerdown', () => {
+        touchLeft = true;
+        leftButton.setFillStyle(buttonColor, 0.8); // Indicate press
+    });
+    leftButton.on('pointerup', () => {
+        touchLeft = false;
+        leftButton.setFillStyle(buttonColor, buttonAlpha);
+    });
+    leftButton.on('pointerout', () => { // Handle pointer sliding off
+        if (touchLeft) {
+           touchLeft = false;
+           leftButton.setFillStyle(buttonColor, buttonAlpha);
+        }
+    });
+
+    // Rotate Right Button
+    const rightButton = scene.add.rectangle(rightButtonX, rotateY, buttonSize, buttonSize, buttonColor, buttonAlpha)
+        .setInteractive()
+        .setScrollFactor(0);
+
+    rightButton.on('pointerdown', () => {
+        touchRight = true;
+        rightButton.setFillStyle(buttonColor, 0.8);
+    });
+    rightButton.on('pointerup', () => {
+        touchRight = false;
+        rightButton.setFillStyle(buttonColor, buttonAlpha);
+    });
+     rightButton.on('pointerout', () => {
+        if (touchRight) {
+           touchRight = false;
+           rightButton.setFillStyle(buttonColor, buttonAlpha);
+        }
+    });
+
+    // Thrust Button
+    const thrustButton = scene.add.rectangle(thrustButtonX, rotateY, buttonSize, buttonSize, buttonColor, buttonAlpha)
+        .setInteractive()
+        .setScrollFactor(0);
+
+    thrustButton.on('pointerdown', () => {
+        touchUp = true;
+        thrustButton.setFillStyle(buttonColor, 0.8);
+    });
+    thrustButton.on('pointerup', () => {
+        touchUp = false;
+        thrustButton.setFillStyle(buttonColor, buttonAlpha);
+    });
+     thrustButton.on('pointerout', () => {
+        if (touchUp) {
+           touchUp = false;
+           thrustButton.setFillStyle(buttonColor, buttonAlpha);
+        }
+    });
+
+    // Shoot Button
+    const shootButton = scene.add.rectangle(shootButtonX, rotateY, buttonSize, buttonSize, 0xff0000, buttonAlpha) // Red for shoot
+        .setInteractive()
+        .setScrollFactor(0);
+
+    shootButton.on('pointerdown', () => {
+        // Send shoot event immediately on press
+        socket.emit('playerShoot');
+        shootButton.setFillStyle(0xff0000, 0.8);
+    });
+     shootButton.on('pointerup', () => {
+         shootButton.setFillStyle(0xff0000, buttonAlpha);
+     });
+      shootButton.on('pointerout', () => {
+         // No state change needed, just visual reset
+         shootButton.setFillStyle(0xff0000, buttonAlpha);
+     });
+
+     // Add button labels (optional)
+    scene.add.text(leftButtonX, rotateY, 'L', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
+    scene.add.text(rightButtonX, rotateY, 'R', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
+    scene.add.text(thrustButtonX, rotateY, 'T', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
+    scene.add.text(shootButtonX, rotateY, 'S', { fontSize: '32px', fill: '#000' }).setOrigin(0.5).setScrollFactor(0);
+
+
+    // Global pointer up to catch cases where the finger lifts off screen
+    scene.input.on('pointerup', () => {
+        if (touchLeft) {
+            touchLeft = false;
+            leftButton.setFillStyle(buttonColor, buttonAlpha);
+        }
+        if (touchRight) {
+            touchRight = false;
+            rightButton.setFillStyle(buttonColor, buttonAlpha);
+        }
+        if (touchUp) {
+            touchUp = false;
+            thrustButton.setFillStyle(buttonColor, buttonAlpha);
+        }
+        // Shoot button visual reset is handled by its own pointerup/out
+    });
+
+} // End of setupTouchControls()
+
 function update() {
-    if (playerGameObject && this.cursors) {
-        const input = {
-            left: this.cursors.left.isDown,
-            right: this.cursors.right.isDown,
-            up: this.cursors.up.isDown,
-            // We can add down key for braking/reverse later if needed
-        };
-        // Emit the input state continuously while keys are pressed
+    // Determine input based on touch or keyboard
+    let input = {
+        left: false,
+        right: false,
+        up: false
+    };
+
+    if (this.sys.game.device.input.touch) {
+        // Use touch state variables
+        input.left = touchLeft;
+        input.right = touchRight;
+        input.up = touchUp;
+    } else if (this.cursors) {
+        // Use keyboard cursors if they exist
+        input.left = this.cursors.left.isDown;
+        input.right = this.cursors.right.isDown;
+        input.up = this.cursors.up.isDown;
+    }
+
+    // Emit the combined input state continuously
+    // (Server handles movement based on this state)
+    if (playerGameObject) { // Only send if player exists
         socket.emit('playerInput', input);
     }
+    // Shooting is handled by the 'playerShoot' event emitted directly from the button press
 } 
 
 // Add constants needed by client-side logic (copied from server)
